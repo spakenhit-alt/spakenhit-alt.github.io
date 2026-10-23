@@ -125,7 +125,7 @@
 
   /* ---------------- 画面の切り替え ---------------- */
   var mapInstance = null;
-  var routes = { '': renderTimeline, shop: renderTimeline, map: renderMap, post: renderPost, admin: renderAdmin, print: renderPrint };
+  var routes = { '': renderTimeline, shop: renderTimeline, map: renderMap, post: renderPost, admin: renderAdmin, print: renderPrint, edit: renderEdit };
 
   function route() {
     var hash = location.hash.replace(/^#\/?/, '');
@@ -136,7 +136,7 @@
     Array.prototype.forEach.call(document.querySelectorAll('.tabs a'), function (a) { a.removeAttribute('aria-current'); });
     var tab = name === 'map' ? 'map' : (name === '' || name === 'shop') ? 'timeline' : null;
     if (tab) document.querySelector('.tabs a[data-tab="' + tab + '"]').setAttribute('aria-current', 'page');
-    document.getElementById('fab').hidden = ['post', 'admin', 'print'].indexOf(name) >= 0;
+    document.getElementById('fab').hidden = ['post', 'admin', 'print', 'edit'].indexOf(name) >= 0;
     document.body.classList.toggle('wide', name === 'print');
 
     var dlg = document.getElementById('map-dialog');
@@ -175,12 +175,92 @@
         h('div', { class: 'who' },
           h('b', null, p.name),
           guest && h('span', { class: 'chip' }, 'ゲスト'),
-          h('time', { class: 'muted', datetime: p.createdAt }, fmtDate(p.createdAt))),
+          h('time', { class: 'muted', datetime: p.createdAt }, fmtDate(p.createdAt)),
+          p.editedAt && h('span', { class: 'muted' }, '（編集済み）')),
         s && h('a', { class: 'shop-link', href: '#/shop/' + encodeURIComponent(s.id) }, icon(ICON.pin), shopLabel(s)),
         p.order && h('div', { class: 'order' }, '頼んだもの：' + p.order),
         h('p', { class: 'text' + (p.isTanka ? ' tanka' : '') }, p.text),
         p.photoUrl && h('img', { class: 'photo', src: p.photoUrl, alt: p.name + 'さんの写真', loading: 'lazy', referrerpolicy: 'no-referrer' }),
-        likeButton(p)));
+        h('div', { class: 'post-actions' },
+          likeButton(p),
+          isMember() && h('a', { class: 'edit-link', href: '#/edit/' + encodeURIComponent(p.id), 'aria-label': p.name + 'さんの投稿を編集' }, '編集'))));
+  }
+  function isMember() { return !!store.get('pass', null); }
+
+  /* ---------------- 編集（メンバーのみ） ---------------- */
+  function renderEdit(postId) {
+    document.title = '投稿を編集 — スパ研 巡検ログ';
+    var wrap = h('div', { class: 'form' }, h('p', { class: 'muted' }, '読み込み中…'));
+    main.append(wrap);
+    var pass = store.get('pass', null);
+    if (!pass) {
+      wrap.replaceChildren(h('h1', null, '投稿を編集'),
+        h('p', null, '編集できるのはメンバーだけです。先に「メンバー用」で合言葉を入れてください。'),
+        h('a', { class: 'btn btn-outline', href: '#/admin' }, 'メンバー用へ'));
+      return;
+    }
+    apiPost({ action: 'adminGet', passphrase: pass, postId: postId }).then(function (r) {
+      if (r && /合言葉/.test(r.error || '')) { store.del('pass'); location.hash = '#/admin'; return; }
+      if (!r || !r.ok) throw new Error((r && r.error) || '読み込めませんでした');
+      var p = r.post;
+
+      var shopSel = h('select', { id: 'e-shop', class: 'input' });
+      r.shops.forEach(function (s) {
+        shopSel.append(h('option', { value: s.id, selected: s.id === p.shopId }, shopLabel(s)));
+      });
+      var orderIn = h('input', { id: 'e-order', class: 'input', maxlength: 60, value: p.order });
+      var textIn = h('textarea', { id: 'e-text', class: 'input', maxlength: 140, 'aria-describedby': 'e-count' });
+      textIn.value = p.text;
+      var counter = h('div', { id: 'e-count', class: 'counter' }, p.text.length + ' / 140文字');
+      textIn.addEventListener('input', function () {
+        counter.textContent = textIn.value.length + ' / 140文字';
+        counter.classList.toggle('over', textIn.value.length > 140);
+      });
+      var tankaIn = h('input', { id: 'e-tanka', type: 'checkbox', checked: p.isTanka });
+      var nameIn = h('input', { id: 'e-name', class: 'input', maxlength: 20, value: p.name });
+      var err = h('p', { class: 'error', role: 'alert', hidden: true });
+      var save = h('button', { class: 'btn btn-fill', type: 'submit' }, '保存する');
+
+      var form = h('form', { class: 'form', style: 'padding:0', novalidate: true },
+        h('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:8px' },
+          h('h1', null, '投稿を編集'),
+          h('button', { class: 'btn-text', type: 'button', onclick: function () { history.back(); } }, 'キャンセル')),
+        h('p', { class: 'muted', style: 'margin:0' },
+          (p.role === 'guest' ? 'ゲスト' : 'メンバー') + 'の投稿 ／ ' + fmtDate(p.createdAt) +
+          ({ pending: ' ／ 承認待ち', hidden: ' ／ 非表示' }[p.status] || '')),
+        field('お店', shopSel, { after: h('div', { class: 'hint' }, '店名そのものの間違いは、スプレッドシートの shops シートで直せます') }),
+        field('頼んだメニュー', orderIn, { optional: '任意' }),
+        h('div', { class: 'field' },
+          h('label', { for: 'e-text' }, '短歌か一言', h('span', { class: 'req' }, '※必須')), textIn, counter,
+          h('label', { class: 'check', for: 'e-tanka' }, tankaIn, '短歌として表示する（明朝体）')),
+        field('名前', nameIn),
+        h('p', { class: 'hint', style: 'margin:0' }, '保存すると、投稿に「編集済み」と表示されます。'),
+        err, save);
+
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        err.hidden = true;
+        var text = textIn.value.trim();
+        if (!text) { err.textContent = '短歌か一言を書いてください'; err.hidden = false; textIn.focus(); return; }
+        if (text.length > 140) { err.textContent = '140文字までです'; err.hidden = false; textIn.focus(); return; }
+        save.disabled = true;
+        save.textContent = '保存中…';
+        apiPost({
+          action: 'editPost', passphrase: store.get('pass', ''), postId: p.id,
+          shopId: shopSel.value, order: orderIn.value.trim(), text: text,
+          isTanka: tankaIn.checked, name: nameIn.value.trim()
+        }).then(function (r2) {
+          if (!r2 || !r2.ok) throw new Error((r2 && r2.error) || '保存できませんでした');
+          return load().then(function () { toast('保存しました'); history.back(); });
+        }).catch(function (ex) {
+          err.textContent = ex.message; err.hidden = false;
+          save.disabled = false; save.textContent = '保存する';
+        });
+      });
+      wrap.replaceChildren(form);
+    }).catch(function (ex) {
+      wrap.replaceChildren(h('p', { class: 'error' }, ex.message || '読み込めませんでした'));
+    });
   }
 
   function likeButton(p) {
@@ -604,6 +684,7 @@
             p.shop && h('div', { style: 'font-size:14px;font-weight:700' }, shopLabel(p.shop)),
             p.order && h('div', { class: 'muted' }, '頼んだもの：' + p.order),
             h('p', { class: 'text' + (p.isTanka ? ' tanka' : '') }, p.text),
+            h('a', { class: 'edit-link', href: '#/edit/' + encodeURIComponent(p.id) }, 'この投稿を編集'),
             actions));
         });
       }).catch(function (ex) { list.replaceChildren(h('p', { class: 'error' }, ex.message || '読み込めませんでした')); });
@@ -888,6 +969,20 @@
             if (!ok) return later({ ok: false, error: '合言葉が違います' });
             posts.forEach(function (p) { if (p.id === b.postId) p.status = b.status; });
             return later({ ok: true });
+          case 'adminGet': {
+            if (!ok) return later({ ok: false, error: '合言葉が違います' });
+            var gp = posts.filter(function (x) { return x.id === b.postId; })[0];
+            if (!gp) return later({ ok: false, error: '投稿が見つかりません' });
+            return later({ ok: true, post: clone(gp), shops: shops.map(clone) });
+          }
+          case 'editPost': {
+            if (!ok) return later({ ok: false, error: '合言葉が違います' });
+            var ep = posts.filter(function (x) { return x.id === b.postId; })[0];
+            if (!ep) return later({ ok: false, error: '投稿が見つかりません' });
+            ep.shopId = b.shopId || ep.shopId; ep.order = b.order; ep.text = b.text; ep.isTanka = !!b.isTanka;
+            ep.name = b.name || '名無し'; ep.editedAt = new Date().toISOString();
+            return later({ ok: true });
+          }
           case 'adminShops':
             if (!ok) return later({ ok: false, error: '合言葉が違います' });
             return later({ ok: true, shops: shops.map(clone) });
