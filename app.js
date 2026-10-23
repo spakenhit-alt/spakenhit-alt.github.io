@@ -187,9 +187,37 @@
         p.photoUrl && h('img', { class: 'photo', src: p.photoUrl, alt: p.name + 'さんの写真', loading: 'lazy', referrerpolicy: 'no-referrer' }),
         h('div', { class: 'post-actions' },
           likeButton(p),
-          isMember() && h('a', { class: 'edit-link', href: '#/edit/' + encodeURIComponent(p.id), 'aria-label': p.name + 'さんの投稿を編集' }, '編集'))));
+          isMember() && h('a', { class: 'edit-link', href: '#/edit/' + encodeURIComponent(p.id), 'aria-label': p.name + 'さんの投稿を編集' }, '編集'),
+          (isMember() || isMine(p.id)) && deleteButton(p, function () { route(); }))));
   }
   function isMember() { return !!store.get('pass', null); }
+  function isMine(id) { return store.get('mine', []).indexOf(id) >= 0; }
+
+  /** 削除ボタン：1回目で確認、もう一度押すと削除 */
+  function deleteButton(p, done, big) {
+    var b = h('button', { class: big ? 'btn btn-danger' : 'del-link', type: 'button' }, big ? 'この投稿を削除' : '削除');
+    var armed = false, timer = null;
+    b.addEventListener('click', function () {
+      if (!armed) {
+        armed = true;
+        b.textContent = '本当に削除する？';
+        b.classList.add('armed');
+        timer = setTimeout(function () { armed = false; b.textContent = big ? 'この投稿を削除' : '削除'; b.classList.remove('armed'); }, 5000);
+        return;
+      }
+      clearTimeout(timer);
+      b.disabled = true;
+      b.textContent = '削除中…';
+      apiPost({ action: 'deletePost', postId: p.id, clientId: clientId, passphrase: store.get('pass', null) }).then(function (r) {
+        if (!r || !r.ok) throw new Error((r && r.error) || '削除できませんでした');
+        return load().then(function () { toast('削除しました'); done(); });
+      }).catch(function (ex) {
+        b.disabled = false; armed = false; b.textContent = big ? 'この投稿を削除' : '削除'; b.classList.remove('armed');
+        toast(ex.message || '削除できませんでした');
+      });
+    });
+    return b;
+  }
 
   /* ---------------- 編集（メンバーのみ） ---------------- */
   function renderEdit(postId) {
@@ -239,7 +267,10 @@
           h('label', { class: 'check', for: 'e-tanka' }, tankaIn, '短歌として表示する（明朝体）')),
         field('名前', nameIn),
         h('p', { class: 'hint', style: 'margin:0' }, '保存すると、投稿に「編集済み」と表示されます。'),
-        err, save);
+        err, save,
+        h('div', { style: 'border-top:1px solid var(--gray-200);padding-top:16px;margin-top:8px' },
+          deleteButton(p, function () { location.hash = '#/'; }, true),
+          h('p', { class: 'hint' }, '削除すると、タイムラインや地図から消えます。')));
 
       form.addEventListener('submit', function (e) {
         e.preventDefault();
@@ -462,6 +493,12 @@
     var sugg = h('ul', { class: 'suggest', hidden: true });
     var areaIn = h('input', { id: 'f-area', class: 'input', maxlength: 30, placeholder: '例：国立・富士見台、府中本町' });
     var areaField = field('場所', areaIn, { req: true, hidden: true, after: h('div', { class: 'hint' }, '新しいお店です。地図にのせるため、最寄り駅や地域を入れてください') });
+    var tbIn = h('input', { id: 'f-tabelog', class: 'input', type: 'url', inputmode: 'url', maxlength: 300, placeholder: 'https://tabelog.com/…' });
+    var tbSearch = h('a', { target: '_blank', rel: 'noopener', style: 'font-size:14px;min-height:44px;display:inline-flex;align-items:center' }, '');
+    var tbField = field('食べログのURL', tbIn, { optional: '任意', hidden: true, after: [
+      h('div', { class: 'hint' }, 'お店の食べログのページを貼ると、地図や投稿一覧に「食べログで見る」が出ます。ゲストの場合は承認のあとに反映されます。'),
+      tbSearch] });
+    var tbDone = h('p', { class: 'hint', hidden: true, style: 'margin:0' });
 
     var orderIn = h('input', { id: 'f-order', class: 'input', maxlength: 60, placeholder: '例：チーズナン、チャイ' });
     var textIn = h('textarea', { id: 'f-text', class: 'input', maxlength: 140, placeholder: '五七五七七でも、ひとことでも', 'aria-describedby': 'f-count' });
@@ -489,7 +526,7 @@
       matches.forEach(function (s) {
         sugg.append(h('li', null, h('button', {
           type: 'button',
-          onclick: function () { selectedShop = s; shopIn.value = s.name; sugg.hidden = true; areaField.hidden = true; orderIn.focus(); }
+          onclick: function () { selectedShop = s; shopIn.value = s.name; sugg.hidden = true; areaField.hidden = true; updateTabelogField(); orderIn.focus(); }
         }, h('span', null, shopLabel(s)), h('span', { class: 'muted' }, '投稿 ' + (postsByShop[s.id] || []).length + '件'))));
       });
       var exact = exactShop();
@@ -502,7 +539,20 @@
       sugg.hidden = false;
       areaField.hidden = !!exact;
     }
-    shopIn.addEventListener('input', function () { selectedShop = null; updateSugg(); });
+    shopIn.addEventListener('input', function () { selectedShop = null; updateSugg(); updateTabelogField(); });
+    areaIn.addEventListener('input', updateTabelogField);
+
+    // 食べログ：お店にまだURLがないときだけ出す
+    function updateTabelogField() {
+      var name = shopIn.value.trim();
+      var shop = selectedShop || exactShop();
+      var has = shop && tabelogOk(shop.tabelogUrl);
+      tbField.hidden = !name || !!has;
+      tbDone.hidden = !has;
+      if (has) { tbDone.replaceChildren('このお店は食べログ登録済みです ', tabelogLink(shop)); }
+      tbSearch.href = 'https://www.google.com/search?q=' + encodeURIComponent('食べログ ' + name + (shop && shop.area ? ' ' + shop.area : areaIn.value.trim() ? ' ' + areaIn.value.trim() : ''));
+      tbSearch.textContent = 'Googleで「食べログ ' + name + '」を探す';
+    }
 
     textIn.addEventListener('input', function () {
       var n = textIn.value.length;
@@ -547,6 +597,7 @@
       h('div', { class: 'field' },
         h('label', { for: 'f-shop' }, '店名', h('span', { class: 'req' }, '※必須')), shopIn, sugg),
       areaField,
+      tbField, tbDone,
       field('頼んだメニュー', orderIn, { optional: '任意' }),
       h('div', { class: 'field' },
         h('label', { for: 'f-text' }, '短歌か一言', h('span', { class: 'req' }, '※必須')), textIn, counter,
@@ -567,6 +618,8 @@
       var shop = selectedShop || exactShop();
       var area = areaIn.value.trim();
       if (!shop && !area) { areaField.hidden = false; return showErr('新しいお店の場所を入れてください', areaIn); }
+      var tbUrl = tbField.hidden ? '' : tbIn.value.trim();
+      if (tbUrl && !tabelogOk(tbUrl)) return showErr('食べログのURLは https://tabelog.com/ で始まるものを貼ってください', tbIn);
       var passphrase = null;
       if (role === 'member') {
         passphrase = store.get('pass', null) || passIn.value;
@@ -579,7 +632,7 @@
         shopId: shop ? shop.id : '', shopName: shopIn.value.trim(), area: area,
         order: orderIn.value.trim(), text: text, isTanka: tankaIn.checked,
         name: nameIn.value.trim(), photo: role === 'member' ? photoData : null,
-        clientId: clientId, website: hp.value
+        clientId: clientId, website: hp.value, tabelogUrl: tbUrl
       }).then(function (r) {
         if (!r || !r.ok) {
           if (role === 'member' && r && /合言葉/.test(r.error || '')) { store.del('pass'); passField.hidden = false; }
@@ -587,6 +640,7 @@
         }
         if (role === 'member') store.set('pass', passphrase);
         store.set('name', nameIn.value.trim());
+        if (r.id) { var mine = store.get('mine', []); mine.push(r.id); store.set('mine', mine.slice(-200)); }
         if (r.status === 'published') {
           return load().then(function () { toast('投稿しました'); location.hash = '#/'; });
         }
@@ -704,7 +758,8 @@
             p.shop && h('div', { style: 'font-size:14px;font-weight:700' }, shopLabel(p.shop)),
             p.order && h('div', { class: 'muted' }, '頼んだもの：' + p.order),
             h('p', { class: 'text' + (p.isTanka ? ' tanka' : '') }, p.text),
-            h('a', { class: 'edit-link', href: '#/edit/' + encodeURIComponent(p.id) }, 'この投稿を編集'),
+            tabelogOk(p.tabelogUrl) && h('div', { style: 'font-size:14px' }, '食べログのURL（承認するとお店に登録）：', h('a', { href: p.tabelogUrl, target: '_blank', rel: 'noopener', style: 'overflow-wrap:anywhere' }, p.tabelogUrl)),
+            h('a', { class: 'edit-link', href: '#/edit/' + encodeURIComponent(p.id) }, 'この投稿を編集・削除'),
             actions));
         });
       }).catch(function (ex) { list.replaceChildren(h('p', { class: 'error' }, ex.message || '読み込めませんでした')); });
@@ -1001,15 +1056,22 @@
               shops.push({ id: shopId, name: b.shopName, area: b.area, lat: null, lng: null, createdAt: new Date().toISOString() });
             }
             var status = b.role === 'member' ? 'published' : 'pending';
-            posts.push({ id: 'p' + (posts.length + 1) + Date.now(), createdAt: new Date().toISOString(), shopId: shopId, order: b.order, text: b.text, isTanka: !!b.isTanka, name: b.name || '名無し', role: b.role, status: status, photoUrl: b.photo || '', likes: 0 });
-            return later({ ok: true, status: status });
+            var nid = 'p' + (posts.length + 1) + Date.now();
+            posts.push({ id: nid, createdAt: new Date().toISOString(), shopId: shopId, order: b.order, text: b.text, isTanka: !!b.isTanka, name: b.name || '名無し', role: b.role, status: status, photoUrl: b.photo || '', likes: 0, clientId: b.clientId, tabelogUrl: b.tabelogUrl || '' });
+            if (status === 'published' && b.tabelogUrl) { var ns = shopOf(shopId); if (ns && !ns.tabelogUrl) ns.tabelogUrl = b.tabelogUrl; }
+            return later({ ok: true, id: nid, status: status });
           }
           case 'adminList':
             if (!ok) return later({ ok: false, error: '合言葉が違います' });
             return later({ ok: true, posts: posts.filter(function (p) { return p.status === b.status; }).map(function (p) { var o = clone(p); o.shop = clone(shopOf(p.shopId)); return o; }) });
           case 'moderate':
             if (!ok) return later({ ok: false, error: '合言葉が違います' });
-            posts.forEach(function (p) { if (p.id === b.postId) p.status = b.status; });
+            posts.forEach(function (p) {
+              if (p.id !== b.postId) return;
+              p.status = b.status;
+              var ms = shopOf(p.shopId);
+              if (b.status === 'published' && p.tabelogUrl && ms && !ms.tabelogUrl) ms.tabelogUrl = p.tabelogUrl;
+            });
             return later({ ok: true });
           case 'adminGet': {
             if (!ok) return later({ ok: false, error: '合言葉が違います' });
@@ -1028,6 +1090,13 @@
           case 'adminShops':
             if (!ok) return later({ ok: false, error: '合言葉が違います' });
             return later({ ok: true, shops: shops.map(clone) });
+          case 'deletePost': {
+            var dp = posts.filter(function (x) { return x.id === b.postId; })[0];
+            if (!dp || dp.status === 'deleted') return later({ ok: false, error: '投稿が見つかりません' });
+            if (!ok && dp.clientId !== b.clientId) return later({ ok: false, error: 'この投稿は消せません' });
+            dp.status = 'deleted';
+            return later({ ok: true });
+          }
           case 'setShopTabelog': {
             if (!ok) return later({ ok: false, error: '合言葉が違います' });
             var ts = shopOf(b.shopId); if (ts) ts.tabelogUrl = b.url || '';
