@@ -131,6 +131,8 @@ main:focus { outline: none; }
 .like:hover { background: var(--gray-50); }
 .like[aria-pressed="true"] { color: var(--red-900); }
 .like[aria-pressed="true"] svg { fill: var(--red-900); }
+.post-actions { display: flex; align-items: center; gap: 16px; }
+.edit-link { display: inline-flex; align-items: center; min-height: 44px; font-size: 14px; }
 .empty { padding: 48px 16px; text-align: center; color: var(--gray-700); }
 
 /* ---- forms ---- */
