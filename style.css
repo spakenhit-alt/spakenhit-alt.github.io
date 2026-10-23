@@ -136,6 +136,11 @@ main:focus { outline: none; }
 .popup-tabelog { margin-top: 2px; }
 .opt-ic-t { background: #FFEEE2; color: #AC3E00; }
 .edit-link { display: inline-flex; align-items: center; min-height: 44px; font-size: 14px; }
+.del-link { display: inline-flex; align-items: center; min-height: 44px; padding: 0; background: none; border: 0; font: inherit; font-size: 14px; color: var(--red-900); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.btn-danger { background: var(--white); color: var(--red-900); border: 1px solid currentColor; }
+.btn-danger:hover { background: #FDEEEE; text-decoration: underline; }
+.del-link.armed, .btn-danger.armed { font-weight: 700; }
+.btn-danger.armed { background: var(--red-900); color: var(--white); }
 .empty { padding: 48px 16px; text-align: center; color: var(--gray-700); }
 
 /* ---- forms ---- */
