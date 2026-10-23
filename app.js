@@ -54,6 +54,8 @@
     nav: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8z"/></svg>',
     info: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:none;margin-top:2px;color:var(--key)" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>',
     download: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
+    fork: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M7 3v8M4 3v5a3 3 0 0 0 6 0V3M7 11v10M17 21V3c-2 1-3 4-3 7s1 4 3 4"/></svg>',
+    ext: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v6H4V6h6"/></svg>',
     locate: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1A1A1A" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>'
   };
 
@@ -156,7 +158,9 @@
       posts = posts.filter(function (p) { return p.shopId === shopId; });
       main.append(h('div', { class: 'filter-bar' },
         h('span', null, h('b', null, s ? shopLabel(s) : 'このお店'), ' の投稿（' + posts.length + '）'),
-        h('a', { href: '#/' }, 'すべて表示')));
+        h('span', { style: 'display:flex;gap:16px;align-items:center;flex-wrap:wrap' },
+          s && tabelogLink(s),
+          h('a', { href: '#/' }, 'すべて表示'))));
       if (s) document.title = s.name + ' — スパ研 巡検ログ';
     }
     if (!posts.length) {
@@ -370,7 +374,8 @@
       best && h('div', { class: 'muted' }, best.name + (best.order ? '・' + best.order : '') + '・いいね ' + best.likes),
       h('div', { class: 'popup-actions' },
         h('button', { class: 'btn btn-outline', type: 'button', onclick: function () { openInMapApp(s); } }, icon(ICON.nav), '地図アプリで開く'),
-        h('a', { href: '#/shop/' + encodeURIComponent(s.id) }, '投稿 ' + n + '件')));
+        h('a', { href: '#/shop/' + encodeURIComponent(s.id) }, '投稿 ' + n + '件')),
+      tabelogLink(s, 'popup-tabelog'));
   }
 
   function mapUrls(s) {
@@ -394,7 +399,22 @@
     g.href = urls.google; a.href = urls.apple;
     g.onclick = function () { if (remember.checked) store.set('mapApp', 'google'); dlg.close(); };
     a.onclick = function () { if (remember.checked) store.set('mapApp', 'apple'); dlg.close(); };
+    var old = document.getElementById('open-tabelog');
+    if (old) old.remove();
+    if (tabelogOk(s.tabelogUrl)) {
+      a.after(h('a', { id: 'open-tabelog', class: 'opt', href: s.tabelogUrl, target: '_blank', rel: 'noopener', onclick: function () { dlg.close(); } },
+        h('span', { class: 'opt-ic opt-ic-t', 'aria-hidden': 'true' }, icon(ICON.fork)), '食べログで開く'));
+    }
     dlg.showModal();
+  }
+
+  /* ---------------- 食べログ（リンクだけ。点数や口コミは取り込まない） ---------------- */
+  var TABELOG_RE = /^https:\/\/(s\.)?tabelog\.com\/[A-Za-z0-9\/_\-.~?=&%#]*$/;
+  function tabelogOk(u) { return typeof u === 'string' && TABELOG_RE.test(u); }
+  function tabelogLink(s, cls) {
+    if (!s || !tabelogOk(s.tabelogUrl)) return null;
+    return h('a', { class: 'tabelog-link' + (cls ? ' ' + cls : ''), href: s.tabelogUrl, target: '_blank', rel: 'noopener', 'aria-label': s.name + 'を食べログで見る（新しいタブ）' },
+      icon(ICON.fork), '食べログで見る', icon(ICON.ext));
   }
 
   function downloadKml() {
@@ -402,7 +422,7 @@
     var marks = shopsNumbered.filter(hasLoc).map(function (s) {
       var b = bestPost(s.id);
       var n = (postsByShop[s.id] || []).length;
-      var desc = [s.area, b ? b.text + ' — ' + b.name : '', '投稿 ' + n + '件'].filter(Boolean).join('\n');
+      var desc = [s.area, b ? b.text + ' — ' + b.name : '', '投稿 ' + n + '件', tabelogOk(s.tabelogUrl) ? '食べログ：' + s.tabelogUrl : ''].filter(Boolean).join('\n');
       return '<Placemark><name>' + esc(s.num + '. ' + s.name) + '</name><description>' + esc(desc) + '</description>' +
         '<Point><coordinates>' + s.lng + ',' + s.lat + ',0</coordinates></Point></Placemark>';
     }).join('\n');
@@ -638,7 +658,7 @@
     }
 
     function adminView(tab) {
-      var labels = { pending: '承認待ち', published: '公開中', hidden: '非表示', shops: 'お店の位置' };
+      var labels = { pending: '承認待ち', published: '公開中', hidden: '非表示', shops: 'お店の情報' };
       var tabs = h('div', { class: 'admin-tabs', role: 'group', 'aria-label': '表示する投稿' });
       Object.keys(labels).forEach(function (k) {
         tabs.append(h('button', { class: 'btn btn-outline', type: 'button', 'aria-pressed': String(k === tab), onclick: function () { adminView(k); } }, labels[k]));
@@ -694,12 +714,34 @@
       apiPost({ action: 'adminShops', passphrase: store.get('pass', '') }).then(function (r) {
         if (denied(r)) return;
         if (!r.ok) throw new Error(r.error);
-        list.replaceChildren(h('p', { class: 'muted' }, '新しいお店の位置は自動で探しますが、ずれることがあります。「位置を直す」から地図をタップして直せます。'));
-        r.shops.forEach(function (s) {
+        list.replaceChildren(h('p', { class: 'muted' }, '新しいお店の位置は自動で探しますが、ずれることがあります。「位置を直す」から地図をタップして直せます。食べログのURLを貼ると、地図や投稿一覧に「食べログで見る」が出ます。'));
+        r.shops.forEach(function (s, i) {
+          var urlIn = h('input', { id: 'tb-' + i, class: 'input', type: 'url', inputmode: 'url', placeholder: 'https://tabelog.com/…', value: s.tabelogUrl || '' });
+          var urlErr = h('p', { class: 'error', role: 'alert', hidden: true, style: 'margin:0' });
+          var saveUrl = h('button', { class: 'btn btn-outline', type: 'button' }, 'URLを保存');
+          saveUrl.addEventListener('click', function () {
+            var v = urlIn.value.trim();
+            urlErr.hidden = true;
+            if (v && !tabelogOk(v)) { urlErr.textContent = 'https://tabelog.com/ で始まる食べログのURLを貼ってください'; urlErr.hidden = false; urlIn.focus(); return; }
+            saveUrl.disabled = true;
+            apiPost({ action: 'setShopTabelog', passphrase: store.get('pass', ''), shopId: s.id, url: v }).then(function (r2) {
+              if (denied(r2)) return;
+              if (!r2.ok) throw new Error(r2.error);
+              toast(v ? '食べログのURLを保存しました' : '食べログのURLを消しました');
+              return load();
+            }).catch(function (ex) { urlErr.textContent = ex.message || '保存できませんでした'; urlErr.hidden = false; })
+              .then(function () { saveUrl.disabled = false; });
+          });
+          var search = 'https://www.google.com/search?q=' + encodeURIComponent('食べログ ' + s.name + (s.area ? ' ' + s.area : ''));
           var row = h('div', { class: 'card' },
             h('b', null, shopLabel(s)),
             h('span', { class: hasLoc(s) ? 'muted' : 'error' }, hasLoc(s) ? '位置：登録済み' : '位置：未登録（地図に出ません）'),
-            h('div', { class: 'card-actions' }, h('button', { class: 'btn btn-outline', type: 'button', onclick: function () { pickLocation(s, row); } }, '位置を直す')));
+            h('div', { class: 'card-actions' }, h('button', { class: 'btn btn-outline', type: 'button', onclick: function () { pickLocation(s, row); } }, '位置を直す')),
+            h('label', { for: 'tb-' + i, style: 'font-weight:700;margin-top:12px' }, '食べログのURL', h('span', { class: 'opt-label', style: 'margin-left:8px' }, '任意')),
+            urlIn,
+            h('a', { href: search, target: '_blank', rel: 'noopener', style: 'font-size:14px;align-self:flex-start;min-height:44px;display:inline-flex;align-items:center' }, 'Googleで「食べログ ' + s.name + '」を探す'),
+            urlErr,
+            h('div', { class: 'card-actions' }, saveUrl));
           list.append(row);
         });
       }).catch(function (ex) { list.replaceChildren(h('p', { class: 'error' }, ex.message || '読み込めませんでした')); });
@@ -986,6 +1028,11 @@
           case 'adminShops':
             if (!ok) return later({ ok: false, error: '合言葉が違います' });
             return later({ ok: true, shops: shops.map(clone) });
+          case 'setShopTabelog': {
+            if (!ok) return later({ ok: false, error: '合言葉が違います' });
+            var ts = shopOf(b.shopId); if (ts) ts.tabelogUrl = b.url || '';
+            return later({ ok: true });
+          }
           case 'setShopLocation':
             if (!ok) return later({ ok: false, error: '合言葉が違います' });
             var s = shopOf(b.shopId); if (s) { s.lat = b.lat; s.lng = b.lng; }
